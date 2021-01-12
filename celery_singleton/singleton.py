@@ -1,11 +1,12 @@
-from celery import Task as BaseTask
-from kombu.utils.uuid import uuid
 import inspect
 
+from celery import Task as BaseTask
+from kombu.utils.uuid import uuid
+
+from . import util
 from .backends import get_backend
 from .config import Config
 from .exceptions import DuplicateTaskError
-from . import util
 
 
 def clear_locks(app):
@@ -21,6 +22,7 @@ class Singleton(BaseTask):
     unique_on = None
     raise_on_duplicate = None
     lock_expiry = None
+    lock_replaced_by_retry = False
 
     @property
     def _raise_on_duplicate(self):
@@ -143,7 +145,20 @@ class Singleton(BaseTask):
         return self.AsyncResult(existing_task_id)
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
-        self.release_lock(task_args=args, task_kwargs=kwargs)
+        if not self.lock_replaced_by_retry:
+            self.release_lock(task_args=args, task_kwargs=kwargs)
 
     def on_success(self, retval, task_id, args, kwargs):
-        self.release_lock(task_args=args, task_kwargs=kwargs)
+        if not self.lock_replaced_by_retry:
+            self.release_lock(task_args=args, task_kwargs=kwargs)
+
+    def retry(self, args=None, kwargs=None, exc=None, throw=True,
+              eta=None, countdown=None, max_retries=None, **options):
+        # release the existing one first before apply
+        request = self.request
+        self.release_lock(task_args=request.args, task_kwargs=request.kwargs)
+        # if throw=False, means this task later will end as success/failure.
+        # we need to stop it from cleaning lock.
+        self.lock_replaced_by_retry = True
+        return super(Singleton, self).retry(
+            args, kwargs, exc, throw, eta, countdown, max_retries, **options)
