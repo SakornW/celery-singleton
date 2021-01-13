@@ -1,11 +1,12 @@
-from celery import Task as BaseTask
-from kombu.utils.uuid import uuid
 import inspect
 
+from celery import Task as BaseTask
+from kombu.utils.uuid import uuid
+
+from . import util
 from .backends import get_backend
 from .config import Config
 from .exceptions import DuplicateTaskError
-from . import util
 
 
 def clear_locks(app):
@@ -147,3 +148,15 @@ class Singleton(BaseTask):
 
     def on_success(self, retval, task_id, args, kwargs):
         self.release_lock(task_args=args, task_kwargs=kwargs)
+
+    def retry(self, args=None, kwargs=None, exc=None, throw=True,
+              eta=None, countdown=None, max_retries=None, **options):
+        if not throw:
+            # If throw=False, means this task later will end as success.
+            # Cannot let this happen as it will release_lock of the new pending retry task
+            raise NotImplementedError("Celery-singleton cannot support retry with throw=False")
+        # release the existing lock first before apply again in retry()
+        request = self.request
+        self.release_lock(task_args=request.args, task_kwargs=request.kwargs)
+        return super(Singleton, self).retry(
+            args, kwargs, exc, throw, eta, countdown, max_retries, **options)
