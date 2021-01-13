@@ -22,7 +22,6 @@ class Singleton(BaseTask):
     unique_on = None
     raise_on_duplicate = None
     lock_expiry = None
-    lock_replaced_by_retry = False
 
     @property
     def _raise_on_duplicate(self):
@@ -145,20 +144,19 @@ class Singleton(BaseTask):
         return self.AsyncResult(existing_task_id)
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
-        if not self.lock_replaced_by_retry:
-            self.release_lock(task_args=args, task_kwargs=kwargs)
+        self.release_lock(task_args=args, task_kwargs=kwargs)
 
     def on_success(self, retval, task_id, args, kwargs):
-        if not self.lock_replaced_by_retry:
-            self.release_lock(task_args=args, task_kwargs=kwargs)
+        self.release_lock(task_args=args, task_kwargs=kwargs)
 
     def retry(self, args=None, kwargs=None, exc=None, throw=True,
               eta=None, countdown=None, max_retries=None, **options):
-        # release the existing one first before apply
+        if not throw:
+            # If throw=False, means this task later will end as success.
+            # Cannot let this happen as it will release_lock of the new pending retry task
+            raise NotImplementedError("Celery-singleton cannot support retry with throw=False")
+        # release the existing lock first before apply again in retry()
         request = self.request
         self.release_lock(task_args=request.args, task_kwargs=request.kwargs)
-        # if throw=False, means this task later will end as success/failure.
-        # we need to stop it from cleaning lock.
-        self.lock_replaced_by_retry = True
         return super(Singleton, self).retry(
             args, kwargs, exc, throw, eta, countdown, max_retries, **options)

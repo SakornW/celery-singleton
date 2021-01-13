@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.3] - 2021-01-13
+
+### Added
+- Support retry(throw=True). Lock will continue, until the retry process finished.
+- Doesn't support retry(throw=False). Too troublesome to prevent on_success from releasing lock
+
+## [0.4.1] - 2021-01-13
+
+### Added
+- Support pickle serializer.
+
 ## [0.3.0] - 2020-10-12
 
 ### Added

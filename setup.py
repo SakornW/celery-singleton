@@ -2,7 +2,7 @@
 from setuptools import find_packages, setup
 
 setup(name='celery-singleton',
-      version='0.4.2',
+      version='0.4.3',
       description='Extend opensource version with pickle support',
       url='https://github.com/SakornW/celery-singleton',
       packages=find_packages(exclude=('tests', 'sample',)),

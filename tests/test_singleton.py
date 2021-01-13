@@ -1,15 +1,15 @@
-import pytest
-from unittest import mock
 import time
 from contextlib import contextmanager
+from unittest import mock
 
+import pytest
 from celery import Celery
 from celery import Task as BaseTask
-from celery_singleton.singleton import Singleton, clear_locks
-from celery_singleton import util, DuplicateTaskError
-from celery_singleton.backends.redis import RedisBackend
+from celery_singleton import DuplicateTaskError, util
 from celery_singleton.backends import get_backend
+from celery_singleton.backends.redis import RedisBackend
 from celery_singleton.config import Config
+from celery_singleton.singleton import Singleton, clear_locks
 
 
 @pytest.fixture(scope="session")
@@ -157,6 +157,96 @@ class TestSimpleTask:
             with pytest.raises(DuplicateTaskError) as exinfo:
                 raise_on_duplicate_task.delay(1, 2, 3)
             assert exinfo.value.task_id == t1.task_id
+
+    def test__task_issue_retry_with_default_throw(
+        self, scoped_app, celery_session_worker
+    ):
+        with scoped_app as app:
+            clear_locks(app)
+            @celery_session_worker.app.task(base=Singleton, bind=True)
+            def retry_task(self, *args):
+                backend = self.singleton_backend
+                config = self.singleton_config
+                assert len(backend.redis.keys(config.key_prefix + "*")) > 0
+                if not backend.redis.get(config.key_prefix + "_retry"):
+                    backend.redis.incr(config.key_prefix + "_retry", amount=1)
+                    self.retry(countdown=1)
+                    return "from retry"
+                assert len(backend.redis.keys(config.key_prefix + "*")) == 2
+                backend.redis.incr(config.key_prefix + "_success", amount=1)
+                return "from success"
+            celery_session_worker.reload()
+            task1 = retry_task.apply_async(args=[1, 2, 3])
+            time.sleep(5)  # Small delay for on_success
+            assert task1.get(timeout=10) == "from success"
+
+            backend = retry_task.singleton_backend
+            config = retry_task.singleton_config
+            assert backend.redis.get(config.key_prefix + "_retry") == '1'
+            assert backend.redis.get(config.key_prefix + "_success") == '1'
+            backend.redis.delete(config.key_prefix + "_retry")
+            backend.redis.delete(config.key_prefix + "_success")
+            assert not backend.redis.keys(config.key_prefix + "*")
+            clear_locks(app)
+
+    def test__task_issue_retry_with_default_throw_2_times(self, scoped_app, celery_session_worker):
+        with scoped_app as app:
+            clear_locks(app)
+            @celery_session_worker.app.task(base=Singleton, bind=True)
+            def retry_task_2_times(self, *args):
+                backend = self.singleton_backend
+                config = self.singleton_config
+                assert len(backend.redis.keys(config.key_prefix + "*")) > 0
+                if backend.redis.get(config.key_prefix + "_retry") != '2':
+                    backend.redis.incr(config.key_prefix + "_retry", amount=1)
+                    self.retry(countdown=1)
+                    return "from retry"
+                assert len(backend.redis.keys(config.key_prefix + "*")) == 2
+                backend.redis.incr(config.key_prefix + "_success", amount=1)
+                return "from success"
+            celery_session_worker.reload()
+            task1 = retry_task_2_times.apply_async(args=[1, 2, 3])
+            time.sleep(5)  # Small delay for on_success
+            assert task1.get(timeout=10) == "from success"
+
+            backend = retry_task_2_times.singleton_backend
+            config = retry_task_2_times.singleton_config
+            assert backend.redis.get(config.key_prefix + "_success") == '1'
+            assert backend.redis.get(config.key_prefix + "_retry") == '2'
+            backend.redis.delete(config.key_prefix + "_retry")
+            backend.redis.delete(config.key_prefix + "_success")
+            assert not backend.redis.keys(config.key_prefix + "*")
+            clear_locks(app)
+
+    def test__task_issue_retry_with_not_throw(
+        self, scoped_app, celery_session_worker
+    ):
+        with scoped_app as app:
+            clear_locks(app)
+            @celery_session_worker.app.task(base=Singleton, bind=True)
+            def retry_task_not_throw(self, *args):
+                backend = self.singleton_backend
+                config = self.singleton_config
+                assert len(backend.redis.keys(config.key_prefix + "*")) > 0
+                if not backend.redis.get(config.key_prefix + "_retry"):
+                    backend.redis.incr(config.key_prefix + "_retry", amount=1)
+                    self.retry(countdown=1, throw=False)
+                    return "from retry"
+                assert len(backend.redis.keys(config.key_prefix + "*")) == 2
+                backend.redis.incr(config.key_prefix + "_success", amount=1)
+                return "from success"
+            celery_session_worker.reload()
+            task1 = retry_task_not_throw.apply_async(args=[1, 2, 3])
+            time.sleep(5)  # Small delay for on_success
+            # assert task1.get(timeout=10) == "from success"
+
+            backend = retry_task_not_throw.singleton_backend
+            config = retry_task_not_throw.singleton_config
+            assert backend.redis.get(config.key_prefix + "_retry") == '1'
+            assert backend.redis.get(config.key_prefix + "_success") is None
+            backend.redis.delete(config.key_prefix + "_retry")
+            assert not backend.redis.keys(config.key_prefix + "*")
+            clear_locks(app)
 
 
 class TestClearLocks:
