@@ -11,7 +11,8 @@ setup(name='celery-singleton',
       python_requires='>=3.6,<4.0')
 
 
-# NOTE:
+# NOTE: to build
+# delete local build/dist folder.
 # python setup.py sdist bdist_wheel
 # twine upload --repository acommerce dist/*
 #
